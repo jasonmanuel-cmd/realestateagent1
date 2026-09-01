@@ -18,7 +18,7 @@ Gmail-alert parsing there when you're ready (see the comment in that file).
 | Path | Purpose |
 | --- | --- |
 | `src/config.js` | Sheet ID, URLs, sheet tab names, and the parcel field-name map. **Field names are unverified placeholders** — see "Before first real run" below. |
-| `src/auth.js` | Google OAuth2 client: loads `credentials.json`, runs a one-time browser consent flow, caches the token in `token.json`, auto-refreshes and persists it on later runs. |
+| `src/auth.js` | Google OAuth2 client. `getAuthenticatedClient()`: loads `credentials.json`, runs a one-time browser consent flow, caches the token in `token.json`, auto-refreshes and persists it on later runs (local/cron use). `getAuthenticatedClientFromEnv()`: builds a client from `GOOGLE_CLIENT_ID`/`GOOGLE_CLIENT_SECRET`/`GOOGLE_REFRESH_TOKEN` env vars with no filesystem access (Vercel use). |
 | `src/sheets.js` | Thin wrapper over the Sheets API (`get`/`update`/`append`/`batchUpdate`/`ensureSheetExists`). |
 | `src/schemaInspector.js` | `inspectParcelSchema()`, `inspectAssessorLayers()`, `inspectAssessorLayerFields()` — run these to get real ArcGIS field names before trusting the collector. |
 | `src/sheetSetup.js` | `ensureDigestSheetsExist()` — creates the four tabs with headers if missing. Runs automatically at the top of every digest run. |
@@ -28,7 +28,10 @@ Gmail-alert parsing there when you're ready (see the comment in that file).
 | `src/digest.js` | `runDailyDigest()` — runs all three collectors, emails a summary via Gmail, logs the run. |
 | `bin/setup-sheets.js` | CLI: `npm run setup:sheets` |
 | `bin/inspect-schema.js` | CLI: `npm run inspect:parcel-schema` / `inspect:assessor-layers` / `inspect:assessor-fields` |
-| `bin/run-digest.js` | CLI: `npm run digest` — this is what you put in cron. |
+| `bin/run-digest.js` | CLI: `npm run digest` — this is what you put in cron for a self-hosted machine/server. |
+| `bin/print-refresh-token.js` | CLI: `npm run print-refresh-token` — prints the client ID/secret/refresh token to paste into Vercel's env vars. Only needed for the Vercel hosting path below. |
+| `api/digest.js` | Vercel serverless function version of `bin/run-digest.js`, triggered by Vercel Cron instead of your own cron. Only relevant if you're hosting on Vercel. |
+| `vercel.json` | Vercel Cron schedule + function config. Only relevant if you're hosting on Vercel. |
 | `test/utils.test.js` | Checks for pure helpers only (`buildUrl`, `formatDate`), run with `npm test`. No fabricated parcel/permit/listing data, per spec. |
 
 ## One-time setup
@@ -92,10 +95,10 @@ Gmail-alert parsing there when you're ready (see the comment in that file).
    (not `UNVERIFIED` rows), and `Digest_Log` for a row with `EmailSent =
    TRUE` and an empty `Errors` column.
 
-## Scheduling
+## Scheduling: option A — your own machine/server (cron)
 
 This is a plain script — schedule it with whatever your OS provides. A
-crontab entry for a daily 6am run:
+crontab entry for a daily 6am Pacific run:
 
 ```
 0 6 * * * cd /path/to/this/repo && TZ=America/Los_Angeles /usr/bin/node bin/run-digest.js >> digest.log 2>&1
@@ -104,6 +107,77 @@ crontab entry for a daily 6am run:
 `bin/run-digest.js` exits non-zero if any collector or the email send
 failed, so cron's own failure-mail (or whatever wraps this) will notice a
 bad run even before you check `Digest_Log`.
+
+## Scheduling: option B — hosting on Vercel
+
+Vercel doesn't run long-lived scripts, and its functions have a read-only,
+per-invocation filesystem — `token.json` caching (option A's approach)
+doesn't work there. Vercel Cron instead makes an HTTP request to a
+serverless function on a schedule, so this repo ships `api/digest.js` (the
+same `runDailyDigest()`, wrapped as an HTTP handler) and `vercel.json` (the
+schedule) as an alternative to `bin/run-digest.js` + your own cron — pick
+one, you don't need both. Setup:
+
+1. **Get a refresh token and client credentials to hand to Vercel.**
+   You still need `credentials.json` locally for this one-time step (see
+   "One-time setup" step 2 above if you haven't done it). Run:
+   ```
+   npm run print-refresh-token
+   ```
+   The first run opens a browser consent URL same as `npm run digest` does.
+   It prints three values — `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`,
+   `GOOGLE_REFRESH_TOKEN`.
+
+2. **Push this repo to a Git provider Vercel can import from** (GitHub,
+   GitLab, Bitbucket), then [import it as a new Vercel
+   project](https://vercel.com/new). No build command or output directory
+   is needed — it's just serverless functions, not a frontend app.
+
+3. **Set environment variables** in Vercel → Project Settings →
+   Environment Variables (not in `.env` — that file never leaves your
+   machine):
+   - `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`, `GOOGLE_REFRESH_TOKEN` —
+     from step 1.
+   - `SPREADSHEET_ID` — same as local setup.
+   - `DIGEST_TO_EMAIL` — optional, same as local setup.
+   - `CRON_SECRET` — make up a long random string. Vercel automatically
+     sends it as `Authorization: Bearer <value>` on cron-triggered
+     requests; `api/digest.js` checks it and rejects anything else with
+     401, so the endpoint can't be triggered by a random visitor who finds
+     the URL. Generate one with `openssl rand -hex 32` or similar.
+
+   Redeploy after setting these (or set them before the first deploy).
+
+4. **Check the cron schedule's timezone.** Vercel Cron schedules run in
+   **UTC**, not your local time, and don't auto-adjust for daylight saving.
+   `vercel.json` ships with `"schedule": "0 13 * * *"`, i.e. 6am Pacific
+   Daylight Time (UTC-7) — during Pacific Standard Time (UTC-8, roughly
+   Nov–Mar) that becomes 5am local. Adjust the cron string, or accept the
+   hour of drift twice a year, or convert to a timezone without DST.
+
+5. **Verify the plan's cron/function limits before relying on this.**
+   Vercel's cron frequency limits, function duration caps, and whether cron
+   is available at all differ by plan (Hobby vs Pro vs Enterprise) and
+   change over time — this build session couldn't reach vercel.com to
+   confirm current numbers, so check
+   [vercel.com/docs/cron-jobs](https://vercel.com/docs/cron-jobs) and your
+   dashboard's plan details yourself. `vercel.json` requests
+   `"maxDuration": 60` for the function; a large parcel pull with many
+   paginated ArcGIS requests could run long, and if your plan caps function
+   duration below that, either upgrade or expect occasional timeouts (which
+   still show up as a failed run — nothing here would silently succeed with
+   partial data).
+
+6. **Test it manually** before trusting the schedule: from the Vercel
+   dashboard, find the deployed function's URL (something like
+   `https://<project>.vercel.app/api/digest`) and hit it with the header
+   Vercel would send:
+   ```
+   curl -H "Authorization: Bearer <your CRON_SECRET>" https://<project>.vercel.app/api/digest
+   ```
+   A `200` (or `207` if a collector had errors, per the `errors` array in
+   the JSON body) means it ran; check `Digest_Log` and your inbox same as
+   the local test run.
 
 ## Finishing the permit collector (Step 5 of the original spec)
 

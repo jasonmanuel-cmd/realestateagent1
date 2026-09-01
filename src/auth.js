@@ -92,4 +92,29 @@ function runConsentFlow(oAuth2Client) {
   });
 }
 
-module.exports = { getAuthenticatedClient, SCOPES };
+/**
+ * Stateless variant for serverless hosts (Vercel, etc.) whose filesystem is
+ * read-only/ephemeral and can't run an interactive browser consent flow.
+ * Needs GOOGLE_CLIENT_ID / GOOGLE_CLIENT_SECRET / GOOGLE_REFRESH_TOKEN as
+ * env vars -- generate the refresh token once locally (getAuthenticatedClient()
+ * above, or `npm run print-refresh-token`) and paste it into the host's
+ * environment variable settings. googleapis exchanges it for a short-lived
+ * access token in memory on each call; nothing needs to be written to disk.
+ */
+function getAuthenticatedClientFromEnv() {
+  const clientId = process.env.GOOGLE_CLIENT_ID;
+  const clientSecret = process.env.GOOGLE_CLIENT_SECRET;
+  const refreshToken = process.env.GOOGLE_REFRESH_TOKEN;
+
+  const missing = ['GOOGLE_CLIENT_ID', 'GOOGLE_CLIENT_SECRET', 'GOOGLE_REFRESH_TOKEN']
+    .filter((name) => !process.env[name]);
+  if (missing.length > 0) {
+    throw new Error(`Missing required env var(s) for serverless auth: ${missing.join(', ')}`);
+  }
+
+  const oAuth2Client = new google.auth.OAuth2(clientId, clientSecret);
+  oAuth2Client.setCredentials({ refresh_token: refreshToken });
+  return oAuth2Client;
+}
+
+module.exports = { getAuthenticatedClient, getAuthenticatedClientFromEnv, SCOPES };

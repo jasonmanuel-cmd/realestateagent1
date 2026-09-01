@@ -13,6 +13,7 @@
     "inspect:assessor-layers": "node bin/inspect-schema.js assessor-layers",
     "inspect:assessor-fields": "node bin/inspect-schema.js assessor-fields",
     "digest": "node bin/run-digest.js",
+    "print-refresh-token": "node bin/print-refresh-token.js",
     "test": "node --test"
   },
   "repository": {
