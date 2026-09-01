@@ -3,7 +3,10 @@ require('dotenv').config();
 function required(name) {
   const value = process.env[name];
   if (!value) {
-    throw new Error(`Missing required env var ${name}. Copy .env.example to .env and fill it in.`);
+    throw new Error(
+      `Missing required env var ${name}. Locally: copy .env.example to .env and fill it in. ` +
+      `On a host like Vercel: set it in Project Settings -> Environment Variables and redeploy.`
+    );
   }
   return value;
 }
