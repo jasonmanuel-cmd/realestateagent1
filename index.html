@@ -1,0 +1,290 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Kern County Leads</title>
+<style>
+  :root {
+    color-scheme: light dark;
+    --bg: #f7f7f5;
+    --panel: #ffffff;
+    --text: #1a1a1a;
+    --muted: #666666;
+    --border: #e0e0dc;
+    --accent: #2f6f4f;
+    --accent-text: #ffffff;
+    --error: #b3261e;
+    --row-hover: #f0f0ec;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #17181a;
+      --panel: #1f2123;
+      --text: #eaeaea;
+      --muted: #9a9a9a;
+      --border: #303234;
+      --accent: #4f9b73;
+      --accent-text: #0d1210;
+      --error: #ff6b60;
+      --row-hover: #26282b;
+    }
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    background: var(--bg);
+    color: var(--text);
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+  }
+  .wrap { max-width: 960px; margin: 0 auto; padding: 32px 20px 64px; }
+  h1 { font-size: 1.4rem; margin: 0 0 4px; }
+  .subtitle { color: var(--muted); font-size: 0.9rem; margin: 0 0 28px; }
+
+  /* --- login --- */
+  #login-view { max-width: 340px; margin: 80px auto 0; }
+  #login-view .panel { background: var(--panel); border: 1px solid var(--border); border-radius: 10px; padding: 28px; }
+  #login-view h1 { text-align: center; margin-bottom: 20px; }
+  #login-form { display: flex; flex-direction: column; gap: 12px; }
+  input[type="password"], input[type="text"] {
+    font-size: 0.95rem;
+    padding: 10px 12px;
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    background: var(--bg);
+    color: var(--text);
+  }
+  button {
+    font-size: 0.95rem;
+    padding: 10px 14px;
+    border-radius: 6px;
+    border: 1px solid var(--border);
+    background: var(--panel);
+    color: var(--text);
+    cursor: pointer;
+  }
+  button.primary { background: var(--accent); color: var(--accent-text); border-color: var(--accent); }
+  button:disabled { opacity: 0.6; cursor: default; }
+  #login-error { color: var(--error); font-size: 0.85rem; min-height: 1.2em; }
+
+  /* --- dashboard --- */
+  #dashboard-view { display: none; }
+  .toolbar { display: flex; align-items: center; gap: 10px; margin-bottom: 16px; flex-wrap: wrap; }
+  .toolbar input[type="text"] { flex: 1; min-width: 180px; }
+  .meta { color: var(--muted); font-size: 0.82rem; margin-bottom: 14px; }
+  table { width: 100%; border-collapse: collapse; background: var(--panel); border: 1px solid var(--border); border-radius: 8px; overflow: hidden; }
+  thead th {
+    text-align: left;
+    font-size: 0.78rem;
+    text-transform: uppercase;
+    letter-spacing: 0.03em;
+    color: var(--muted);
+    padding: 10px 12px;
+    border-bottom: 1px solid var(--border);
+    cursor: pointer;
+    user-select: none;
+    white-space: nowrap;
+  }
+  thead th:hover { color: var(--text); }
+  tbody td { padding: 10px 12px; border-bottom: 1px solid var(--border); font-size: 0.88rem; }
+  tbody tr:last-child td { border-bottom: none; }
+  tbody tr:hover { background: var(--row-hover); }
+  .empty, .error-box, .loading { color: var(--muted); padding: 40px 0; text-align: center; }
+  .error-box { color: var(--error); }
+  .sort-indicator { opacity: 0.6; font-size: 0.75em; }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <div id="login-view">
+    <div class="panel">
+      <h1>Kern County Leads</h1>
+      <form id="login-form">
+        <input type="password" id="password" placeholder="Password" autocomplete="current-password" autofocus />
+        <button type="submit" class="primary" id="login-btn">Sign in</button>
+        <div id="login-error"></div>
+      </form>
+    </div>
+  </div>
+
+  <div id="dashboard-view">
+    <h1>Kern County Leads</h1>
+    <p class="subtitle">Vacant parcels from the daily digest pipeline. Newest first.</p>
+
+    <div class="toolbar">
+      <input type="text" id="filter" placeholder="Filter by APN, zoning, or status..." />
+      <button id="refresh-btn">Refresh</button>
+      <button id="logout-btn">Log out</button>
+    </div>
+
+    <div class="meta" id="meta"></div>
+    <div id="content"></div>
+  </div>
+
+</div>
+
+<script>
+(function () {
+  var loginView = document.getElementById('login-view');
+  var dashboardView = document.getElementById('dashboard-view');
+  var loginForm = document.getElementById('login-form');
+  var loginError = document.getElementById('login-error');
+  var loginBtn = document.getElementById('login-btn');
+  var passwordInput = document.getElementById('password');
+  var filterInput = document.getElementById('filter');
+  var refreshBtn = document.getElementById('refresh-btn');
+  var logoutBtn = document.getElementById('logout-btn');
+  var contentEl = document.getElementById('content');
+  var metaEl = document.getElementById('meta');
+
+  var allLeads = [];
+  var sortKey = 'firstSeenDate';
+  var sortDir = -1; // newest first
+
+  var COLUMNS = [
+    { key: 'apn', label: 'APN' },
+    { key: 'acreage', label: 'Acreage' },
+    { key: 'zoning', label: 'Zoning' },
+    { key: 'status', label: 'Status' },
+    { key: 'firstSeenDate', label: 'First Seen' },
+    { key: 'lastSeenDate', label: 'Last Seen' }
+  ];
+
+  function showLogin() {
+    loginView.style.display = '';
+    dashboardView.style.display = 'none';
+    passwordInput.value = '';
+    passwordInput.focus();
+  }
+
+  function showDashboard() {
+    loginView.style.display = 'none';
+    dashboardView.style.display = '';
+  }
+
+  function escapeHtml(s) {
+    return String(s == null ? '' : s).replace(/[&<>"']/g, function (c) {
+      return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c];
+    });
+  }
+
+  function render() {
+    var q = filterInput.value.trim().toLowerCase();
+    var rows = allLeads.filter(function (l) {
+      if (!q) return true;
+      return [l.apn, l.zoning, l.status].some(function (v) {
+        return v && String(v).toLowerCase().indexOf(q) !== -1;
+      });
+    });
+
+    rows = rows.slice().sort(function (a, b) {
+      var av = a[sortKey], bv = b[sortKey];
+      if (av == null) av = '';
+      if (bv == null) bv = '';
+      if (typeof av === 'number' && typeof bv === 'number') return (av - bv) * sortDir;
+      return String(av).localeCompare(String(bv)) * sortDir;
+    });
+
+    metaEl.textContent = rows.length + ' of ' + allLeads.length + ' parcels';
+
+    if (allLeads.length === 0) {
+      contentEl.innerHTML = '<div class="empty">No parcels yet. Run the digest (scheduled Vercel Cron, or `npm run digest` locally) to populate this.</div>';
+      return;
+    }
+    if (rows.length === 0) {
+      contentEl.innerHTML = '<div class="empty">No parcels match that filter.</div>';
+      return;
+    }
+
+    var thead = '<thead><tr>' + COLUMNS.map(function (c) {
+      var indicator = c.key === sortKey ? (sortDir === 1 ? ' <span class="sort-indicator">&uarr;</span>' : ' <span class="sort-indicator">&darr;</span>') : '';
+      return '<th data-key="' + c.key + '">' + c.label + indicator + '</th>';
+    }).join('') + '</tr></thead>';
+
+    var tbody = '<tbody>' + rows.map(function (l) {
+      return '<tr>' + COLUMNS.map(function (c) {
+        return '<td>' + escapeHtml(l[c.key]) + '</td>';
+      }).join('') + '</tr>';
+    }).join('') + '</tbody>';
+
+    contentEl.innerHTML = '<table>' + thead + tbody + '</table>';
+
+    Array.prototype.forEach.call(contentEl.querySelectorAll('thead th'), function (th) {
+      th.addEventListener('click', function () {
+        var key = th.getAttribute('data-key');
+        if (sortKey === key) {
+          sortDir = -sortDir;
+        } else {
+          sortKey = key;
+          sortDir = 1;
+        }
+        render();
+      });
+    });
+  }
+
+  function loadLeads() {
+    contentEl.innerHTML = '<div class="loading">Loading...</div>';
+    return fetch('/api/leads', { credentials: 'same-origin' })
+      .then(function (res) {
+        if (res.status === 401) {
+          showLogin();
+          return null;
+        }
+        return res.json().then(function (body) {
+          if (!res.ok) throw new Error(body.error || ('HTTP ' + res.status));
+          return body;
+        });
+      })
+      .then(function (body) {
+        if (!body) return;
+        allLeads = body.leads || [];
+        showDashboard();
+        render();
+      })
+      .catch(function (err) {
+        showDashboard();
+        contentEl.innerHTML = '<div class="error-box">Failed to load leads: ' + escapeHtml(err.message) + '</div>';
+      });
+  }
+
+  loginForm.addEventListener('submit', function (e) {
+    e.preventDefault();
+    loginError.textContent = '';
+    loginBtn.disabled = true;
+    fetch('/api/login', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      credentials: 'same-origin',
+      body: JSON.stringify({ password: passwordInput.value })
+    })
+      .then(function (res) { return res.json().then(function (body) { return { ok: res.ok, body: body }; }); })
+      .then(function (r) {
+        if (!r.ok) {
+          loginError.textContent = r.body.error || 'Login failed';
+          return;
+        }
+        return loadLeads();
+      })
+      .catch(function (err) {
+        loginError.textContent = err.message;
+      })
+      .finally(function () {
+        loginBtn.disabled = false;
+      });
+  });
+
+  filterInput.addEventListener('input', render);
+  refreshBtn.addEventListener('click', loadLeads);
+  logoutBtn.addEventListener('click', function () {
+    fetch('/api/logout', { method: 'POST', credentials: 'same-origin' }).finally(showLogin);
+  });
+
+  // On load: try the leads endpoint directly. A valid session cookie skips
+  // the login form entirely; a 401 falls back to it.
+  loadLeads();
+})();
+</script>
+</body>
+</html>

@@ -32,6 +32,10 @@ Gmail-alert parsing there when you're ready (see the comment in that file).
 | `bin/print-refresh-token.js` | CLI: `npm run print-refresh-token` — prints the client ID/secret/refresh token to paste into Vercel's env vars. Only needed for the Vercel hosting path below. |
 | `api/digest.js` | Vercel serverless function version of `bin/run-digest.js`, triggered by Vercel Cron instead of your own cron. Only relevant if you're hosting on Vercel. |
 | `vercel.json` | Vercel Cron schedule + function config. Only relevant if you're hosting on Vercel. |
+| `index.html` | The leads dashboard — a single password-gated page, served at your Vercel deployment's root URL. See "Leads dashboard" below. |
+| `src/session.js` | Signed-cookie session helper backing the dashboard's password gate (no session store — the cookie itself is self-verifying via an HMAC). |
+| `api/login.js` / `api/logout.js` | Check `DASHBOARD_PASSWORD`, set/clear the session cookie. |
+| `api/leads.js` | Read-only JSON feed the dashboard fetches: `Parcels_Snapshot` merged with `Parcels_Seen`, newest-first. Requires a valid session cookie. |
 | `test/utils.test.js` | Checks for pure helpers only (`buildUrl`, `formatDate`), run with `npm test`. No fabricated parcel/permit/listing data, per spec. |
 
 ## One-time setup
@@ -178,6 +182,58 @@ one, you don't need both. Setup:
    A `200` (or `207` if a collector had errors, per the `errors` array in
    the JSON body) means it ran; check `Digest_Log` and your inbox same as
    the local test run.
+
+## Leads dashboard
+
+A single read-only page (`index.html`) showing the parcels that have come
+in, newest-first — a friendlier view than opening the raw spreadsheet. It's
+gated behind one shared password (env var `DASHBOARD_PASSWORD`), no
+per-user accounts. Only relevant if you're hosting on Vercel (or otherwise
+serving `index.html` + `/api/*` together) — it's not part of the local
+CLI/cron path.
+
+**What it shows today:** parcels only (`Parcels_Snapshot` merged with
+`Parcels_Seen` by APN, so you get current acreage/zoning/status alongside
+when each APN was first/last seen). Permits and email-alert listings aren't
+included yet because both collectors (`src/permits.js`,
+`src/emailAlerts.js`) are still stubs returning `[]` — there's nothing real
+to show. Add sections to `api/leads.js` and `index.html` once those are
+finished; the pattern (a `/api/*.js` JSON endpoint gated by
+`isValidSession()`, rendered by a table in `index.html`) extends
+directly.
+
+**It's read-only.** No status/notes/archive tracking — nothing here writes
+back to the sheet. Do that in the sheet itself for now (e.g. edit
+`Parcels_Seen`'s `LastStatus` column by hand), or ask for it to be added
+later as its own feature.
+
+### Setup
+
+Set two more env vars in Vercel (Project Settings → Environment Variables),
+in addition to the ones from "Hosting on Vercel" above:
+
+- `DASHBOARD_PASSWORD` — whatever password you want to gate the page with.
+- `SESSION_SECRET` — a long random string used to sign the session cookie
+  (`openssl rand -hex 32` or similar). Anyone who has this value could forge
+  a valid session cookie without knowing the password, so treat it like a
+  secret, not like `DASHBOARD_PASSWORD` itself.
+
+Redeploy after setting them, then visit your deployment's root URL
+(`https://<project>.vercel.app/`) — you'll land on the login form. After
+entering the password, the page fetches `/api/leads` and stays signed in
+for 7 days (via the session cookie) until you hit "Log out" or it expires.
+
+### How the auth works, briefly
+
+`api/login.js` compares the submitted password to `DASHBOARD_PASSWORD`
+(constant-time comparison, not a naive `===`, to avoid a timing side
+channel) and, on match, sets an `HttpOnly` cookie containing an expiry
+timestamp plus an HMAC of it (keyed by `SESSION_SECRET`). `api/leads.js`
+and any future protected endpoint call `isValidSession()`
+(`src/session.js`) to verify that HMAC before returning anything — no
+database or session store involved, and a request with no cookie, an
+expired one, or a tampered one is rejected before it ever touches the
+Sheets API.
 
 ## Finishing the permit collector (Step 5 of the original spec)
 
