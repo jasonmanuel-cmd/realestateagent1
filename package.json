@@ -1,0 +1,27 @@
+{
+  "name": "kern-county-deal-finder",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Standalone Node.js runner for the Kern County Deal Finder parcel/permit/digest pipeline.",
+  "main": "src/digest.js",
+  "engines": {
+    "node": ">=18"
+  },
+  "scripts": {
+    "setup:sheets": "node bin/setup-sheets.js",
+    "inspect:parcel-schema": "node bin/inspect-schema.js parcel",
+    "inspect:assessor-layers": "node bin/inspect-schema.js assessor-layers",
+    "inspect:assessor-fields": "node bin/inspect-schema.js assessor-fields",
+    "digest": "node bin/run-digest.js",
+    "test": "node --test"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/jasonmanuel-cmd/realestateagent1.git"
+  },
+  "license": "UNLICENSED",
+  "dependencies": {
+    "dotenv": "^17.4.2",
+    "googleapis": "^178.0.0"
+  }
+}

@@ -1,70 +1,115 @@
-# Kern County Deal Finder -- Parcel/Permit/Digest Extension
+# Kern County Deal Finder
 
-This repo currently contains only the new extension pieces described below.
-The existing Gmail-alert parser (`collectEmailAlerts()` and friends) is
-assumed to already exist in the target Apps Script project and is not
-reproduced here -- these files are meant to be added alongside it (e.g. via
-`clasp push` or by copying into the Apps Script editor), not to replace it.
+Standalone Node.js runner for the parcel collector, permit collector, and
+digest/email pipeline. This replaces the earlier Google Apps Script version
+of this extension — it runs as an ordinary script on your own machine or
+server (via cron), reading and writing the same Google Sheet through the
+Sheets API and sending the digest email through the Gmail API.
 
-## What's here
+The Zillow/Redfin/Realtor.com email-alert parser that the original "Kern
+County Deal Finder" concept assumed never actually existed in this repo —
+it was empty when this build started, so there was nothing to port.
+`src/emailAlerts.js` is stubbed the same way the permit collector is: it
+returns `[]` and logs, rather than fabricating listing data. Wire in real
+Gmail-alert parsing there when you're ready (see the comment in that file).
 
-| File | Purpose |
+## Layout
+
+| Path | Purpose |
 | --- | --- |
-| `appsscript.json` | Manifest (timezone, V8 runtime). If merging into an existing project, don't blindly overwrite its manifest -- merge just the parts you need. |
-| `Config.gs` | URLs, sheet names, and the parcel field-name map. **Field names are unverified placeholders** -- see "Before first real run" below. |
-| `Utils.gs` | `buildUrl_`, `formatDate_`, `logError_` shared helpers. |
-| `SchemaInspector.gs` | `inspectParcelSchema()`, `inspectAssessorLayers()`, `inspectAssessorLayerFields()` -- run manually to get real ArcGIS field names before trusting the collector. |
-| `SheetSetup.gs` | `ensureDigestSheetsExist()` -- creates the four new tabs with headers if missing. Runs automatically at the top of `runDailyDigest()`. |
-| `Parcels.gs` | `collectParcelData()`, `diffParcels()` -- pulls the vacant-parcels ArcGIS layer, paginates, snapshots it, and diffs against `Parcels_Seen`. |
-| `Permits.gs` | `collectPermitData()` -- **intentionally stubbed**, returns `[]` and logs. See "Finishing the permit collector" below. |
-| `Digest.gs` | `runDailyDigest()`, `buildDigestBody()` -- runs all three collectors, emails a summary, logs the run. |
-| `Triggers.gs` | `setDailyTrigger()` -- installs the daily 6am trigger, idempotently. |
-| `Tests.gs` | `runSelfTests_()` -- checks pure helpers only (`buildUrl_`, `formatDate_`) against synthetic, non-domain input. No fabricated parcel/permit/listing data, per spec. |
+| `src/config.js` | Sheet ID, URLs, sheet tab names, and the parcel field-name map. **Field names are unverified placeholders** — see "Before first real run" below. |
+| `src/auth.js` | Google OAuth2 client: loads `credentials.json`, runs a one-time browser consent flow, caches the token in `token.json`, auto-refreshes and persists it on later runs. |
+| `src/sheets.js` | Thin wrapper over the Sheets API (`get`/`update`/`append`/`batchUpdate`/`ensureSheetExists`). |
+| `src/schemaInspector.js` | `inspectParcelSchema()`, `inspectAssessorLayers()`, `inspectAssessorLayerFields()` — run these to get real ArcGIS field names before trusting the collector. |
+| `src/sheetSetup.js` | `ensureDigestSheetsExist()` — creates the four tabs with headers if missing. Runs automatically at the top of every digest run. |
+| `src/parcels.js` | `collectParcelData()`, `diffParcels()` — pages through the vacant-parcels ArcGIS layer, snapshots it, diffs against `Parcels_Seen`. |
+| `src/permits.js` | `collectPermitData()` — **intentionally stubbed**. See "Finishing the permit collector" below. |
+| `src/emailAlerts.js` | `collectEmailAlerts()` — **intentionally stubbed**. See above. |
+| `src/digest.js` | `runDailyDigest()` — runs all three collectors, emails a summary via Gmail, logs the run. |
+| `bin/setup-sheets.js` | CLI: `npm run setup:sheets` |
+| `bin/inspect-schema.js` | CLI: `npm run inspect:parcel-schema` / `inspect:assessor-layers` / `inspect:assessor-fields` |
+| `bin/run-digest.js` | CLI: `npm run digest` — this is what you put in cron. |
+| `test/utils.test.js` | Checks for pure helpers only (`buildUrl`, `formatDate`), run with `npm test`. No fabricated parcel/permit/listing data, per spec. |
 
-## Before first real run: confirm the parcel schema (Step 1)
+## One-time setup
 
-**This build session could not reach `maps.kerncounty.com`, `maps.co.kern.ca.us`,
-or `aca-prod.accela.com` -- the sandbox's network egress policy blocks all
-three hosts.** So the field names in `Config.gs` (`APN`, `ACREAGE`, `ZONING`,
-`STATUS`) are unverified placeholders, not values read off a live response.
-Do not run a real daily digest until someone has:
+1. **Install dependencies**
+   ```
+   npm install
+   ```
 
-1. Opened this project in the Apps Script editor (where `UrlFetchApp` runs
-   on Google's infrastructure, not through whatever network you're
-   developing on -- so it *can* reach these hosts even if your dev sandbox
-   can't).
-2. Run `inspectParcelSchema()` and read the logged field list (View > Logs,
-   or the Executions panel).
-3. Updated `CONFIG.PARCEL_FIELDS` in `Config.gs` with the real names.
-4. Checked whether the logged `editFieldsInfo` includes an `EditDate` field.
-   If it does, that's the closest thing to a native "what changed recently"
-   signal -- set `CONFIG.PARCEL_FIELDS.EDIT_DATE` to it, and consider
-   whether it changes the diffing strategy.
-5. Determined the layer's actual refresh cadence (from `editFieldsInfo`, or
-   by asking Kern County GIS directly) and set
-   `CONFIG.PARCEL_REFRESH_CADENCE_CONFIRMED = true` once known. Until that
-   flag is true, the digest email appends a note that "new" parcels are new
-   relative to the last successful pull, not necessarily new since
-   yesterday -- **do not remove that note or claim "daily new parcels" in
-   any user-facing text until the cadence is actually confirmed.**
-6. Optionally run `inspectAssessorLayers()` / `inspectAssessorLayerFields(id)`
-   to confirm the Assessor layer index (source #3 in the spec). No collector
-   currently queries it -- the spec only asked for it to be confirmed, not
-   wired into a query -- so this is only needed if/when that's built.
+2. **Create a Google OAuth client**
+   In [Google Cloud Console](https://console.cloud.google.com/), create/select a
+   project, enable the **Google Sheets API** and **Gmail API**, then under
+   *APIs & Services → Credentials* create an OAuth client ID of type
+   **Desktop app**. Download the JSON and save it as `credentials.json` in
+   the repo root (it's gitignored — never commit it).
 
-If a field name is wrong, ArcGIS returns `undefined` for it rather than an
-error. `writeParcelSnapshot_` in `Parcels.gs` turns any such `undefined`
-into the literal string `'UNVERIFIED'` in the sheet, and `diffParcels()`
-refuses to treat an `'UNVERIFIED'` APN as new signal. That means a schema
-mismatch shows up as a wall of `UNVERIFIED` rows in `Parcels_Snapshot`
-instead of a digest that's silently wrong -- if you see that, the field
-names in `Config.gs` are wrong; go re-run `inspectParcelSchema()`.
+3. **Configure the environment**
+   ```
+   cp .env.example .env
+   ```
+   Fill in `SPREADSHEET_ID` (from the sheet's URL) and optionally
+   `DIGEST_TO_EMAIL` (defaults to the authenticated Gmail account itself).
 
-## Finishing the permit collector (Step 5)
+4. **Confirm the real ArcGIS field names (mandatory before a real run)**
+   The field names in `src/config.js` (`APN`, `ACREAGE`, `ZONING`, `STATUS`)
+   are placeholders — this build couldn't reach the county's ArcGIS server
+   to verify them. Run:
+   ```
+   npm run inspect:parcel-schema
+   ```
+   The first run opens a browser consent URL — visit it, approve, and the
+   token is cached in `token.json` (gitignored) for all future runs,
+   including from cron. Read the field list it prints and update
+   `PARCEL_FIELDS` in `src/config.js` with the real names. If it logs an
+   `editFieldsInfo` block with an EditDate field, set `EDIT_DATE` too, note
+   the refresh cadence, and flip `PARCEL_REFRESH_CADENCE_CONFIRMED: true`
+   once you actually know how often the layer updates — until then, the
+   digest email appends a note that "new" parcels are relative to the last
+   pull, not necessarily new since yesterday.
 
-`collectPermitData()` in `Permits.gs` is intentionally unfinished, per spec.
-Accela Citizen Access has no confirmed JSON API; the Building-module search
-is an ASP.NET postback form. Finishing it requires:
+   A wrong field name makes ArcGIS return `undefined` rather than an error.
+   `src/parcels.js` turns that into the literal string `'UNVERIFIED'` in the
+   sheet, and `diffParcels()` refuses to treat an `'UNVERIFIED'` APN as new
+   signal — so a schema mismatch shows up as a wall of `UNVERIFIED` rows
+   instead of a digest that's silently wrong.
+
+5. **Create the sheet tabs**
+   ```
+   npm run setup:sheets
+   ```
+   Creates `Parcels_Snapshot`, `Parcels_Seen`, `Permits_Seen`, and
+   `Digest_Log` with headers if they don't already exist. (This also runs
+   automatically at the start of every digest run, so this step is mostly
+   for a quick sanity check.)
+
+6. **Do a manual test run**
+   ```
+   npm run digest
+   ```
+   Check your inbox for the digest email, `Parcels_Snapshot` for real data
+   (not `UNVERIFIED` rows), and `Digest_Log` for a row with `EmailSent =
+   TRUE` and an empty `Errors` column.
+
+## Scheduling
+
+This is a plain script — schedule it with whatever your OS provides. A
+crontab entry for a daily 6am run:
+
+```
+0 6 * * * cd /path/to/this/repo && TZ=America/Los_Angeles /usr/bin/node bin/run-digest.js >> digest.log 2>&1
+```
+
+`bin/run-digest.js` exits non-zero if any collector or the email send
+failed, so cron's own failure-mail (or whatever wraps this) will notice a
+bad run even before you check `Digest_Log`.
+
+## Finishing the permit collector (Step 5 of the original spec)
+
+`collectPermitData()` in `src/permits.js` always returns `[]` and logs a
+note right now. Accela Citizen Access has no confirmed JSON API — the
+Building-module search is an ASP.NET postback form. Finishing it requires:
 
 1. Loading `https://aca-prod.accela.com/KERNCO/Cap/CapHome.aspx?module=Building`
    in a browser and inspecting the rendered search form (view-source /
@@ -76,33 +121,31 @@ is an ASP.NET postback form. Finishing it requires:
 4. Diffing those against `Permits_Seen` the same way `diffParcels()` diffs
    against `Parcels_Seen` (append new `RecordNumber`s with `FirstSeenDate`).
 
-This has to be done against the live portal by a human with a browser --
-it can't be guessed from this codebase, and this build session couldn't
-reach `aca-prod.accela.com` to even inspect it. Until it's finished,
-`collectPermitData()` returns `[]` and logs a note (visible in
-`Digest_Log`'s Errors column) rather than fabricating permit rows.
+This has to be done against the live portal by a human with a browser — it
+can't be guessed from this codebase. Until it's finished, permits just
+won't show up in the digest, and that's expected, not a bug.
 
-## Setup
+## Wiring in the real email-alert parser
 
-1. Add these files to the existing Kern County Deal Finder Apps Script
-   project (merge `appsscript.json` carefully -- don't overwrite existing
-   scopes/settings if the project already has some).
-2. Run `ensureDigestSheetsExist()` once (or just run `runDailyDigest()`,
-   which calls it automatically) to create `Parcels_Snapshot`,
-   `Parcels_Seen`, `Permits_Seen`, and `Digest_Log`.
-3. Complete "Before first real run" above.
-4. Run `setDailyTrigger()` once to install the daily 6am trigger. It checks
-   `ScriptApp.getProjectTriggers()` first, so re-running it won't create
-   duplicates.
-5. Finish the permit collector per "Finishing the permit collector" above
-   whenever someone has time at a browser against the live Accela portal.
+`collectEmailAlerts()` in `src/emailAlerts.js` is stubbed the same way.
+When you're ready to build it for real:
+
+1. Add the `gmail.readonly` scope to the `SCOPES` array in `src/auth.js`.
+2. Delete `token.json` and re-run any CLI command once to redo the consent
+   flow with the new scope.
+3. Use `google.gmail({ version: 'v1', auth })` (same pattern as
+   `sendDigestEmail` in `src/digest.js`) to list/read the Zillow/Redfin/
+   Realtor.com alert emails and parse them into row-arrays shaped like
+   what `buildDigestBody()` in `src/digest.js` expects for listings.
 
 ## Reliability notes
 
-- Every collector (parcels, permits, listings) runs in its own `try/catch`
-  in `runDailyDigest()`. A failure in one never blocks the others.
-- Every collector failure is pushed into an `errors` array that both shows
-  up in the digest email body ("COLLECTOR ERRORS") and gets written to
-  `Digest_Log`'s `Errors` column with `EmailSent`/error-count context. A
-  broken collector should never look like a quiet "0 new" -- check
-  `Digest_Log` if a digest looks suspiciously empty.
+- Every collector (parcels, permits, listings) and the email send itself
+  run in their own `try/catch` in `runDailyDigest()`. A failure in one
+  never blocks the others.
+- Every failure is pushed into an `errors` array that both shows up in the
+  digest email body ("COLLECTOR ERRORS") and gets written to
+  `Digest_Log`'s `Errors` column alongside `EmailSent`. A broken collector
+  should never look like a quiet "0 new" — check `Digest_Log` if a digest
+  looks suspiciously empty, and check the process exit code / cron log if
+  the email never arrived at all.
