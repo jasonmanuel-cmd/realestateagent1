@@ -18,15 +18,13 @@ module.exports = async (req, res) => {
 
   try {
     // Required inside the handler, not at module top level: src/config.js
-    // throws at require-time if a required env var (e.g. SPREADSHEET_ID) is
-    // missing. Requiring it outside this try/catch would crash the whole
+    // throws at require-time if a required env var (e.g. SHEETS_WEBAPP_URL)
+    // is missing. Requiring it outside this try/catch would crash the whole
     // function invocation (Vercel's opaque FUNCTION_INVOCATION_FAILED) before
     // we get a chance to turn that into a readable JSON error.
-    const { getAuthenticatedClientFromEnv } = require('../src/auth');
     const { runDailyDigest } = require('../src/digest');
 
-    const auth = getAuthenticatedClientFromEnv();
-    const result = await runDailyDigest(auth);
+    const result = await runDailyDigest();
     res.status(result.errors.length > 0 ? 207 : 200).json(result);
   } catch (err) {
     console.error('Fatal error running digest:', err);

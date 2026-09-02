@@ -15,15 +15,12 @@ module.exports = async (req, res) => {
   }
 
   try {
-    const { getAuthenticatedClientFromEnv } = require('../src/auth');
     const sheetsApi = require('../src/sheets');
     const config = require('../src/config');
 
-    const auth = getAuthenticatedClientFromEnv();
-
     const [snapshot, seen] = await Promise.all([
-      sheetsApi.getValues(auth, config.SPREADSHEET_ID, config.SHEET_NAMES.PARCELS_SNAPSHOT),
-      sheetsApi.getValues(auth, config.SPREADSHEET_ID, config.SHEET_NAMES.PARCELS_SEEN)
+      sheetsApi.getValues(config.SHEET_NAMES.PARCELS_SNAPSHOT),
+      sheetsApi.getValues(config.SHEET_NAMES.PARCELS_SEEN)
     ]);
 
     const seenByApn = new Map();

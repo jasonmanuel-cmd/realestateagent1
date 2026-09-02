@@ -78,13 +78,13 @@ function toSnapshotRows(features) {
   });
 }
 
-async function writeParcelSnapshot(auth, features) {
+async function writeParcelSnapshot(features) {
   const sheetName = config.SHEET_NAMES.PARCELS_SNAPSHOT;
   const header = ['APN', 'Acreage', 'Zoning', 'Status', 'SourceLayer', 'PulledDate'];
   const rows = toSnapshotRows(features);
 
-  await sheetsApi.clearRange(auth, config.SPREADSHEET_ID, sheetName);
-  await sheetsApi.updateValues(auth, config.SPREADSHEET_ID, `${sheetName}!A1`, [header, ...rows]);
+  await sheetsApi.clearSheet(sheetName);
+  await sheetsApi.updateValues(sheetName, 'A1', [header, ...rows]);
 }
 
 /**
@@ -94,12 +94,12 @@ async function writeParcelSnapshot(auth, features) {
  * has those columns specifically for that, so leaving them frozen at their
  * first-seen value would make them permanently stale.
  */
-async function diffParcels(auth) {
+async function diffParcels() {
   const snapshotName = config.SHEET_NAMES.PARCELS_SNAPSHOT;
   const seenName = config.SHEET_NAMES.PARCELS_SEEN;
 
-  const snapshot = await sheetsApi.getValues(auth, config.SPREADSHEET_ID, snapshotName);
-  const seenData = await sheetsApi.getValues(auth, config.SPREADSHEET_ID, seenName);
+  const snapshot = await sheetsApi.getValues(snapshotName);
+  const seenData = await sheetsApi.getValues(seenName);
 
   const seenRowIndexByApn = new Map();
   seenData.slice(1).forEach((row, i) => seenRowIndexByApn.set(row[0], i + 1)); // +1: skip header
@@ -122,17 +122,17 @@ async function diffParcels(auth) {
       if (seenIdx < 0) return; // already queued as new in this same pull
 
       const rowNum = seenIdx + 1; // account for header row in 1-indexed sheet rows
-      batchUpdates.push({ range: `${seenName}!C${rowNum}`, values: [[today]] }); // LastSeenDate
+      batchUpdates.push({ sheetName: seenName, a1Range: `C${rowNum}`, values: [[today]] }); // LastSeenDate
 
       const currentStatus = seenData[seenIdx][3];
       if (currentStatus !== row[3]) {
-        batchUpdates.push({ range: `${seenName}!D${rowNum}`, values: [[row[3]]] }); // LastStatus
+        batchUpdates.push({ sheetName: seenName, a1Range: `D${rowNum}`, values: [[row[3]]] }); // LastStatus
       }
     }
   });
 
-  await sheetsApi.appendValues(auth, config.SPREADSHEET_ID, seenName, newSeenRows);
-  await sheetsApi.batchUpdateValues(auth, config.SPREADSHEET_ID, batchUpdates);
+  await sheetsApi.appendValues(seenName, newSeenRows);
+  await sheetsApi.batchUpdateValues(batchUpdates);
 
   return newParcels;
 }

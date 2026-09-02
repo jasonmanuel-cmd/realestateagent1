@@ -1,10 +1,8 @@
 #!/usr/bin/env node
-const { getAuthenticatedClient } = require('../src/auth');
 const { ensureDigestSheetsExist } = require('../src/sheetSetup');
 
 async function main() {
-  const auth = await getAuthenticatedClient();
-  await ensureDigestSheetsExist(auth);
+  await ensureDigestSheetsExist();
   console.log('Sheets verified/created: Parcels_Snapshot, Parcels_Seen, Permits_Seen, Digest_Log.');
 }
 

@@ -8,7 +8,7 @@
  * returning an empty array because there was genuinely nothing new; the
  * errors list is what keeps those two cases apart.
  */
-const { google } = require('googleapis');
+const nodemailer = require('nodemailer');
 const config = require('./config');
 const { formatDate } = require('./utils');
 const { collectParcelData, writeParcelSnapshot, diffParcels } = require('./parcels');
@@ -17,8 +17,8 @@ const { collectEmailAlerts } = require('./emailAlerts');
 const { ensureDigestSheetsExist } = require('./sheetSetup');
 const sheetsApi = require('./sheets');
 
-async function runDailyDigest(auth) {
-  await ensureDigestSheetsExist(auth);
+async function runDailyDigest() {
+  await ensureDigestSheetsExist();
 
   const errors = [];
   let newParcels = [];
@@ -27,8 +27,8 @@ async function runDailyDigest(auth) {
 
   try {
     const features = await collectParcelData();
-    await writeParcelSnapshot(auth, features);
-    newParcels = await diffParcels(auth);
+    await writeParcelSnapshot(features);
+    newParcels = await diffParcels();
   } catch (err) {
     errors.push(`Parcels: ${err.message || err}`);
   }
@@ -53,13 +53,13 @@ async function runDailyDigest(auth) {
 
   let emailSent = false;
   try {
-    await sendDigestEmail(auth, subject, body);
+    await sendDigestEmail(subject, body);
     emailSent = true;
   } catch (err) {
     errors.push(`Email send: ${err.message || err}`);
   }
 
-  await logDigestRun(auth, newParcels.length, newPermits.length, newListings.length, emailSent, errors);
+  await logDigestRun(newParcels.length, newPermits.length, newListings.length, emailSent, errors);
 
   return { newParcels, newPermits, newListings, errors, emailSent };
 }
@@ -104,35 +104,34 @@ function buildDigestBody(parcels, permits, listings, errors) {
   return body;
 }
 
-async function sendDigestEmail(auth, subject, body) {
-  const gmail = google.gmail({ version: 'v1', auth });
+async function sendDigestEmail(subject, body) {
+  const transporter = nodemailer.createTransport({
+    service: 'gmail',
+    auth: {
+      user: config.SMTP_USER,
+      pass: config.SMTP_APP_PASSWORD
+    },
+    // nodemailer's default timeouts run up to ~2 minutes on a bad
+    // connection/credentials -- too long next to Vercel's function duration
+    // cap (vercel.json requests 60s). Fail fast instead so a broken SMTP
+    // config shows up as a normal logged error, not a killed function that
+    // never reaches logDigestRun().
+    connectionTimeout: 15000,
+    greetingTimeout: 15000,
+    socketTimeout: 15000
+  });
 
-  let to = config.DIGEST_TO_EMAIL;
-  if (!to) {
-    const profile = await gmail.users.getProfile({ userId: 'me' });
-    to = profile.data.emailAddress;
-  }
-
-  const message = [
-    `To: ${to}`,
-    `Subject: ${subject}`,
-    'Content-Type: text/plain; charset="UTF-8"',
-    '',
-    body
-  ].join('\n');
-
-  const encodedMessage = Buffer.from(message)
-    .toString('base64')
-    .replace(/\+/g, '-')
-    .replace(/\//g, '_')
-    .replace(/=+$/, '');
-
-  await gmail.users.messages.send({ userId: 'me', requestBody: { raw: encodedMessage } });
+  await transporter.sendMail({
+    from: config.SMTP_USER,
+    to: config.DIGEST_TO_EMAIL || config.SMTP_USER,
+    subject,
+    text: body
+  });
 }
 
-async function logDigestRun(auth, parcelCount, permitCount, listingCount, emailSent, errors) {
+async function logDigestRun(parcelCount, permitCount, listingCount, emailSent, errors) {
   const row = [formatDate(new Date()), parcelCount, permitCount, listingCount, emailSent, errors.join('; ')];
-  await sheetsApi.appendValues(auth, config.SPREADSHEET_ID, config.SHEET_NAMES.DIGEST_LOG, [row]);
+  await sheetsApi.appendValues(config.SHEET_NAMES.DIGEST_LOG, [row]);
 }
 
 module.exports = { runDailyDigest, buildDigestBody };

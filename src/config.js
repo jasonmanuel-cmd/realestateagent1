@@ -12,8 +12,16 @@ function required(name) {
 }
 
 module.exports = {
-  SPREADSHEET_ID: required('SPREADSHEET_ID'),
-  // Defaults to the authenticated Gmail account's own address if unset.
+  // The deployed Apps Script Web App URL and its shared secret -- see
+  // apps-script/Code.gs. Replaces the Google Sheets REST API + OAuth.
+  SHEETS_WEBAPP_URL: required('SHEETS_WEBAPP_URL'),
+  SHEETS_WEBAPP_SECRET: required('SHEETS_WEBAPP_SECRET'),
+
+  // Gmail SMTP + an App Password (myaccount.google.com -> Security -> App
+  // Passwords, requires 2-Step Verification). Replaces the Gmail API + OAuth.
+  SMTP_USER: required('SMTP_USER'),
+  SMTP_APP_PASSWORD: required('SMTP_APP_PASSWORD'),
+  // Defaults to SMTP_USER itself if unset.
   DIGEST_TO_EMAIL: process.env.DIGEST_TO_EMAIL || null,
 
   PARCEL_QUERY_URL: 'https://maps.kerncounty.com/arcgis/rest/services/Planning/SB2VP_VacantParcels_pub/MapServer/5/query',

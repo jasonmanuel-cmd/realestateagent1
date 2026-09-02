@@ -1,10 +1,8 @@
 #!/usr/bin/env node
-const { getAuthenticatedClient } = require('../src/auth');
 const { runDailyDigest } = require('../src/digest');
 
 async function main() {
-  const auth = await getAuthenticatedClient();
-  const result = await runDailyDigest(auth);
+  const result = await runDailyDigest();
 
   console.log(
     `Digest run complete: ${result.newParcels.length} new parcels, ` +
