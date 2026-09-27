@@ -3,6 +3,9 @@
 <head>
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
+<meta name="theme-color" content="#f7f7f5" media="(prefers-color-scheme: light)" />
+<meta name="theme-color" content="#17181a" media="(prefers-color-scheme: dark)" />
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Crect width='100' height='100' rx='22' fill='%232f6f4f'/%3E%3Ctext x='50' y='70' font-size='58' font-family='system-ui,sans-serif' font-weight='700' fill='white' text-anchor='middle'%3EK%3C/text%3E%3C/svg%3E" />
 <title>Kern County Leads</title>
 <style>
   :root {
@@ -36,27 +39,36 @@
     background: var(--bg);
     color: var(--text);
     font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    -webkit-text-size-adjust: 100%;
   }
   .wrap { max-width: 960px; margin: 0 auto; padding: 32px 20px 64px; }
   h1 { font-size: 1.4rem; margin: 0 0 4px; }
   .subtitle { color: var(--muted); font-size: 0.9rem; margin: 0 0 28px; }
 
   /* --- login --- */
-  #login-view { max-width: 340px; margin: 80px auto 0; }
-  #login-view .panel { background: var(--panel); border: 1px solid var(--border); border-radius: 10px; padding: 28px; }
+  #login-view {
+    max-width: 340px;
+    margin: 0 auto;
+    min-height: calc(100vh - 96px); /* offsets .wrap's own padding so the card centers in the viewport at any screen height */
+    display: flex;
+    align-items: center;
+    justify-content: center;
+  }
+  #login-view .panel { width: 100%; background: var(--panel); border: 1px solid var(--border); border-radius: 10px; padding: 28px; }
   #login-view h1 { text-align: center; margin-bottom: 20px; }
   #login-form { display: flex; flex-direction: column; gap: 12px; }
-  input[type="password"], input[type="text"] {
-    font-size: 0.95rem;
-    padding: 10px 12px;
+  input[type="password"], input[type="text"], select {
+    font-size: 16px; /* keeps iOS Safari from auto-zooming the page on focus (it does this below 16px) */
+    padding: 12px;
     border: 1px solid var(--border);
     border-radius: 6px;
     background: var(--bg);
     color: var(--text);
   }
   button {
-    font-size: 0.95rem;
-    padding: 10px 14px;
+    font-size: 16px;
+    padding: 12px 16px;
+    min-height: 44px; /* comfortable touch target */
     border-radius: 6px;
     border: 1px solid var(--border);
     background: var(--panel);
@@ -71,7 +83,9 @@
   #dashboard-view { display: none; }
   .toolbar { display: flex; align-items: center; gap: 10px; margin-bottom: 16px; flex-wrap: wrap; }
   .toolbar input[type="text"] { flex: 1; min-width: 180px; }
+  .toolbar select { flex-shrink: 0; }
   .meta { color: var(--muted); font-size: 0.82rem; margin-bottom: 14px; }
+  #content { overflow-x: auto; -webkit-overflow-scrolling: touch; }
   table { width: 100%; border-collapse: collapse; background: var(--panel); border: 1px solid var(--border); border-radius: 8px; overflow: hidden; }
   thead th {
     text-align: left;
@@ -85,13 +99,49 @@
     user-select: none;
     white-space: nowrap;
   }
-  thead th:hover { color: var(--text); }
+  @media (hover: hover) {
+    thead th:hover { color: var(--text); }
+    tbody tr:hover { background: var(--row-hover); }
+  }
   tbody td { padding: 10px 12px; border-bottom: 1px solid var(--border); font-size: 0.88rem; }
   tbody tr:last-child td { border-bottom: none; }
-  tbody tr:hover { background: var(--row-hover); }
   .empty, .error-box, .loading { color: var(--muted); padding: 40px 0; text-align: center; }
   .error-box { color: var(--error); }
   .sort-indicator { opacity: 0.6; font-size: 0.75em; }
+
+  /* Below this width, a 6-column table is unreadable -- fold each row into
+     a stacked label/value card instead of forcing horizontal scroll. */
+  @media (max-width: 640px) {
+    table, tbody, tr { display: block; }
+    thead { display: none; }
+    table { border: none; background: transparent; }
+    tbody tr {
+      display: block;
+      background: var(--panel);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      margin-bottom: 10px;
+    }
+    tbody td {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      gap: 12px;
+    }
+    tbody td::before {
+      content: attr(data-label);
+      font-size: 0.72rem;
+      text-transform: uppercase;
+      letter-spacing: 0.03em;
+      color: var(--muted);
+      flex-shrink: 0;
+    }
+  }
+
+  @media (max-width: 480px) {
+    .toolbar { flex-direction: column; align-items: stretch; }
+    .toolbar input[type="text"], .toolbar select, .toolbar button { width: 100%; }
+  }
 </style>
 </head>
 <body>
@@ -114,6 +164,15 @@
 
     <div class="toolbar">
       <input type="text" id="filter" placeholder="Filter by APN, zoning, or status..." />
+      <select id="sort-select" aria-label="Sort by">
+        <option value="firstSeenDate:-1">Newest first</option>
+        <option value="firstSeenDate:1">Oldest first</option>
+        <option value="apn:1">APN (A-Z)</option>
+        <option value="acreage:-1">Acreage (high-low)</option>
+        <option value="acreage:1">Acreage (low-high)</option>
+        <option value="zoning:1">Zoning (A-Z)</option>
+        <option value="status:1">Status (A-Z)</option>
+      </select>
       <button id="refresh-btn">Refresh</button>
       <button id="logout-btn">Log out</button>
     </div>
@@ -133,6 +192,7 @@
   var loginBtn = document.getElementById('login-btn');
   var passwordInput = document.getElementById('password');
   var filterInput = document.getElementById('filter');
+  var sortSelect = document.getElementById('sort-select');
   var refreshBtn = document.getElementById('refresh-btn');
   var logoutBtn = document.getElementById('logout-btn');
   var contentEl = document.getElementById('content');
@@ -141,6 +201,7 @@
   var allLeads = [];
   var sortKey = 'firstSeenDate';
   var sortDir = -1; // newest first
+  var filterTimer = null;
 
   var COLUMNS = [
     { key: 'apn', label: 'APN' },
@@ -152,7 +213,7 @@
   ];
 
   function showLogin() {
-    loginView.style.display = '';
+    loginView.style.display = 'flex'; // matches #login-view's flex centering
     dashboardView.style.display = 'none';
     passwordInput.value = '';
     passwordInput.focus();
@@ -160,7 +221,7 @@
 
   function showDashboard() {
     loginView.style.display = 'none';
-    dashboardView.style.display = '';
+    dashboardView.style.display = 'block';
   }
 
   function escapeHtml(s) {
@@ -186,6 +247,10 @@
       return String(av).localeCompare(String(bv)) * sortDir;
     });
 
+    var sortValue = sortKey + ':' + sortDir;
+    var hasSortOption = Array.prototype.some.call(sortSelect.options, function (o) { return o.value === sortValue; });
+    if (hasSortOption) sortSelect.value = sortValue;
+
     metaEl.textContent = rows.length + ' of ' + allLeads.length + ' parcels';
 
     if (allLeads.length === 0) {
@@ -204,7 +269,7 @@
 
     var tbody = '<tbody>' + rows.map(function (l) {
       return '<tr>' + COLUMNS.map(function (c) {
-        return '<td>' + escapeHtml(l[c.key]) + '</td>';
+        return '<td data-label="' + escapeHtml(c.label) + '">' + escapeHtml(l[c.key]) + '</td>';
       }).join('') + '</tr>';
     }).join('') + '</tbody>';
 
@@ -275,7 +340,16 @@
       });
   });
 
-  filterInput.addEventListener('input', render);
+  filterInput.addEventListener('input', function () {
+    clearTimeout(filterTimer);
+    filterTimer = setTimeout(render, 120); // avoid re-rendering the whole table on every keystroke, cheap but noticeable on slower phones
+  });
+  sortSelect.addEventListener('change', function () {
+    var parts = sortSelect.value.split(':');
+    sortKey = parts[0];
+    sortDir = Number(parts[1]);
+    render();
+  });
   refreshBtn.addEventListener('click', loadLeads);
   logoutBtn.addEventListener('click', function () {
     fetch('/api/logout', { method: 'POST', credentials: 'same-origin' }).finally(showLogin);
